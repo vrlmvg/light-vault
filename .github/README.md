@@ -34,8 +34,8 @@ Supported: Vaultwarden and self-hosted Bitwarden servers (including ones on your
 `http://`), PBKDF2 and Argon2id accounts, and authenticator-app two-factor login. Other two-factor methods (email
 codes, security keys, Duo) aren't supported yet, and signing in to Bitwarden's own cloud hasn't been tested.
 
-**Early version:** so far the tool has been tested against a test server built from Bitwarden's protocol and
-Bitwarden's published crypto test vectors, not yet against a live Vaultwarden. Reports are welcome.
+Tested with a self-hosted Vaultwarden, a test server built from Bitwarden's protocol and Bitwarden's published
+crypto test vectors. Reports from other setups are welcome.
 
 This project is not affiliated with Bitwarden or the Vaultwarden project.
 
