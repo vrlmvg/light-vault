@@ -43,13 +43,11 @@ This project is not affiliated with Bitwarden or the Vaultwarden project.
 
 You need JDK 21, the Android SDK and `adb`, and a Light Phone III you can sideload tools onto over ADB.
 
-1. In `tool/lighttool.toml`, switch `serverPackage` to `"com.lightos"` (the committed value targets the LightOS
-   emulator).
-2. Build: `./gradlew :tool:assembleDebug`
-3. Install: `adb install -r tool/build/outputs/apk/debug/tool-debug.apk`
+1. Build: `./gradlew :tool:assembleDebug`
+2. Install: `adb install -r tool/build/outputs/apk/debug/tool-debug.apk`
 
-To run it in the LightOS emulator instead, keep the committed `serverPackage` and build with
-`./gradlew :tool:assembleDebug -DlightSdk.allowAltServerPackage=true`.
+To run it in the LightOS emulator instead, switch `serverPackage` in `tool/lighttool.toml` to
+`"com.thelightphone.sdk.emulator"` and build with `./gradlew :tool:assembleDebug -DlightSdk.allowAltServerPackage=true`.
 
 The tool's code is in [`tool/`](../tool). Everything else in this repository is the Light SDK (MIT licence); the
 SDK's own README is [`README.md`](../README.md).
