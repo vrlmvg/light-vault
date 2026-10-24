@@ -10,6 +10,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.security.SecureRandom
@@ -37,6 +39,7 @@ class VaultStore internal constructor(
     filesDir: File,
 ) {
     private val syncFile = File(filesDir, "vault.sync")
+    private val pinMutex = Mutex()
 
     val server: Flow<String?> = dataStore.data.map { it[SERVER] }
     val email: Flow<String?> = dataStore.data.map { it[EMAIL] }
@@ -66,7 +69,13 @@ class VaultStore internal constructor(
     }
 
     suspend fun saveSync(json: String) = withContext(Dispatchers.IO) {
-        syncFile.writeBytes(keystore.encrypt(json))
+        // Write then rename, so a crash mid-write never leaves a corrupt cache.
+        val partial = File(syncFile.parentFile, syncFile.name + ".tmp")
+        partial.writeBytes(keystore.encrypt(json))
+        if (!partial.renameTo(syncFile)) {
+            partial.delete()
+            throw java.io.IOException("Couldn't save the vault")
+        }
         dataStore.edit { it[LAST_SYNC] = System.currentTimeMillis() }
     }
 
@@ -91,12 +100,20 @@ class VaultStore internal constructor(
         }
     }
 
-    suspend fun unlockWithPin(pin: String): SymmetricKey = withContext(Dispatchers.Default) {
+    suspend fun unlockWithPin(pin: String): SymmetricKey = pinMutex.withLock {
+        withContext(Dispatchers.Default) { checkPin(pin) }
+    }
+
+    private suspend fun checkPin(pin: String): SymmetricKey {
         val prefs = dataStore.data.first()
         val wrapped = prefs[WRAPPED_USER_KEY] ?: throw PinWipedException()
         val blob = keystore.decrypt(wrapped.fromBase64()).fromBase64()
         val salt = blob.copyOfRange(0, 16)
         val iv = blob.copyOfRange(16, 28)
+        // Counted before checking, so killing the tool mid-check doesn't give a free attempt.
+        val failures = (prefs[PIN_FAILURES] ?: 0) + 1
+        if (failures > MAX_PIN_ATTEMPTS) wipePin()
+        dataStore.edit { it[PIN_FAILURES] = failures }
         val pinKey = BitwardenCrypto.pbkdf2(pin.toByteArray(), salt, PIN_ITERATIONS)
         try {
             val key = Cipher.getInstance("AES/GCM/NoPadding").run {
@@ -104,18 +121,18 @@ class VaultStore internal constructor(
                 doFinal(blob, 28, blob.size - 28)
             }
             dataStore.edit { it[PIN_FAILURES] = 0 }
-            SymmetricKey.fromBytes(key)
+            return SymmetricKey.fromBytes(key)
         } catch (e: AEADBadTagException) {
-            val failures = (prefs[PIN_FAILURES] ?: 0) + 1
-            if (failures >= MAX_PIN_ATTEMPTS) {
-                dataStore.edit { it.remove(WRAPPED_USER_KEY); it.remove(PIN_FAILURES) }
-                throw PinWipedException()
-            }
-            dataStore.edit { it[PIN_FAILURES] = failures }
+            if (failures >= MAX_PIN_ATTEMPTS) wipePin()
             throw WrongPinException(MAX_PIN_ATTEMPTS - failures)
         } finally {
             pinKey.fill(0)
         }
+    }
+
+    private suspend fun wipePin(): Nothing {
+        dataStore.edit { it.remove(WRAPPED_USER_KEY); it.remove(PIN_FAILURES) }
+        throw PinWipedException()
     }
 
     /** Signs out: removes tokens, keys and the cached vault (the device id is kept). */

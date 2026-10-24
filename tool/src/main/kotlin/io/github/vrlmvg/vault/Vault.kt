@@ -79,7 +79,9 @@ object VaultDecryptor {
     private fun organizationKeys(profile: JsonObject?, userKey: SymmetricKey): Map<String, SymmetricKey> {
         val orgs = profile?.array("organizations").orEmpty()
         if (orgs.isEmpty()) return emptyMap()
-        val privateKey = profile?.str("privateKey")?.let { EncString.parse(it).decryptWith(userKey) } ?: return emptyMap()
+        // Without the private key, organization items count as failed; personal items still open.
+        val privateKey = profile?.str("privateKey")?.let { runCatching { EncString.parse(it).decryptWith(userKey) }.getOrNull() }
+            ?: return emptyMap()
         return orgs.mapNotNull { element ->
             val org = element as? JsonObject ?: return@mapNotNull null
             val id = org.str("id") ?: return@mapNotNull null

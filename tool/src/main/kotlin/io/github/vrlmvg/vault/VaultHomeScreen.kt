@@ -63,6 +63,9 @@ class VaultHomeViewModel(private val store: VaultStore) : LightViewModel<Unit>()
         super.onScreenShow(screen)
         VaultSession.lockIfIdle()
         if (VaultSession.isUnlocked) syncIfDue()
+        // The vault may have locked while the tool was in the background; a PIN editor created
+        // then doesn't take input, so start a fresh one now that the screen is showing.
+        else pinSession.value++
     }
 
     override fun onAppPause() {

@@ -16,6 +16,7 @@ import androidx.lifecycle.viewModelScope
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightFullscreenModal
@@ -67,6 +68,16 @@ class VaultSettingsViewModel(private val store: VaultStore) : LightViewModel<Uni
     }
 
     fun dismissMessage() { message.value = null }
+
+    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
+        super.onScreenShow(screen)
+        VaultSession.lockIfIdle()
+    }
+
+    override fun onAppPause() {
+        super.onAppPause()
+        VaultSession.onPaused()
+    }
 
     override fun onBackPressed(): Boolean {
         if (confirmingSignOut.value) { confirmingSignOut.value = false; return true }

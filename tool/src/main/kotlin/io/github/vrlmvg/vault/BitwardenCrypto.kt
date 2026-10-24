@@ -25,6 +25,13 @@ data class KdfConfig(
     val memoryMiB: Int? = null,
     val parallelism: Int? = null,
 ) {
+    /** Within the bounds Bitwarden's own clients accept. */
+    fun isSafe(): Boolean = when (type) {
+        PBKDF2 -> iterations in 5_000..2_000_000
+        ARGON2ID -> iterations in 2..10 && (memoryMiB ?: 64) in 16..1024 && (parallelism ?: 4) in 1..16
+        else -> false
+    }
+
     companion object {
         const val PBKDF2 = 0
         const val ARGON2ID = 1
@@ -130,7 +137,9 @@ class EncString private constructor(val type: Int, val iv: ByteArray?, val data:
     fun decryptWith(key: SymmetricKey): ByteArray {
         val iv = iv ?: throw VaultCryptoException("Missing IV")
         when (type) {
-            0 -> Unit
+            // Unauthenticated; only valid for legacy keys that have no MAC part. Otherwise a server could
+            // swap in a value it can tamper with.
+            0 -> if (key.macKey != null) throw VaultCryptoException("Unauthenticated value for a MAC key")
             2 -> {
                 val macKey = key.macKey ?: throw VaultCryptoException("Key has no MAC part")
                 val expected = Mac.getInstance("HmacSHA256").run {
@@ -156,13 +165,21 @@ class EncString private constructor(val type: Int, val iv: ByteArray?, val data:
             val type = value.substring(0, dot).toIntOrNull() ?: throw VaultCryptoException("Malformed EncString")
             val parts = value.substring(dot + 1).split('|')
             val d = Base64.getDecoder()
-            return when (type) {
-                0 -> EncString(type, d.decode(parts[0]), d.decode(parts[1]), null)
-                1, 2 -> EncString(type, d.decode(parts[0]), d.decode(parts[1]), d.decode(parts.getOrNull(2) ?: ""))
-                3, 4 -> EncString(type, null, d.decode(parts[0]), null)
-                5, 6 -> EncString(type, null, d.decode(parts[0]), parts.getOrNull(1)?.let(d::decode))
-                else -> throw VaultCryptoException("Unsupported EncString type $type")
+            val enc = try {
+                when (type) {
+                    0 -> EncString(type, d.decode(parts[0]), d.decode(parts[1]), null)
+                    1, 2 -> EncString(type, d.decode(parts[0]), d.decode(parts[1]), d.decode(parts.getOrNull(2) ?: ""))
+                    3, 4 -> EncString(type, null, d.decode(parts[0]), null)
+                    5, 6 -> EncString(type, null, d.decode(parts[0]), parts.getOrNull(1)?.let(d::decode))
+                    else -> throw VaultCryptoException("Unsupported EncString type $type")
+                }
+            } catch (e: IndexOutOfBoundsException) {
+                throw VaultCryptoException("Malformed EncString")
+            } catch (e: IllegalArgumentException) {
+                throw VaultCryptoException("Malformed EncString")
             }
+            if (enc.iv != null && enc.iv.size != 16) throw VaultCryptoException("Malformed EncString")
+            return enc
         }
     }
 }

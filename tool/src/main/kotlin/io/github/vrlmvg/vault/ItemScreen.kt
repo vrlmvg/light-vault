@@ -24,6 +24,10 @@ import kotlinx.coroutines.delay
 /** Read-only view of one vault item. Secrets stay hidden until tapped. */
 class ItemScreen(sealedActivity: SealedLightActivity, private val itemId: String) : SimpleLightScreen<Unit>(sealedActivity) {
 
+    override fun willShow() = VaultSession.lockIfIdle()
+
+    override fun onAppPause() = VaultSession.onPaused()
+
     @Composable
     override fun Content() {
         val state by VaultSession.state.collectAsState()

@@ -9,6 +9,11 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 /** Expected values come from the test suite of Bitwarden's own SDK (bitwarden/sdk-internal, bitwarden-crypto). */
 class BitwardenCryptoTest {
@@ -79,6 +84,41 @@ class BitwardenCryptoTest {
         for (value in listOf(RSA_SHA256, RSA_SHA1, RSA_SHA1 .replaceFirst("4.", "6.") + "|AA==")) {
             assertContentEquals(expected, BitwardenCrypto.decryptWithPrivateKey(value, PRIVATE_KEY_DER), value.take(2))
         }
+    }
+
+
+    @Test
+    fun rejectsUnauthenticatedValueForMacKey() {
+        val key = SymmetricKey.fromBytes(b64.decode("sJnO8rVi0dTwND43n0T9x7665s8mVUYNAaJ4nm7gx1iia1I7947URL60nwfIHaf9QJePO4VkNN0oT9jh4iC6aA=="))
+        val iv = ByteArray(16) { it.toByte() }
+        val data = Cipher.getInstance("AES/CBC/PKCS5Padding").run {
+            init(Cipher.ENCRYPT_MODE, SecretKeySpec(key.encKey, "AES"), IvParameterSpec(iv))
+            doFinal("swapped".toByteArray())
+        }
+        val type0 = EncString.parse("0.${Base64.getEncoder().encodeToString(iv)}|${Base64.getEncoder().encodeToString(data)}")
+        assertFailsWith<VaultCryptoException> { type0.decryptWith(key) }
+        // Legacy keys without a MAC part still open type 0 values.
+        assertEquals("swapped", type0.decryptString(SymmetricKey(key.encKey.copyOf(), null)))
+    }
+
+    @Test
+    fun malformedEncStringsFailCleanly() {
+        for (value in listOf("2.", "2.AAAA", "2.!!!|AAAA|AAAA", "2.AAAA|AAAA|AAAA", "x.AAAA", "9.AAAA|AAAA")) {
+            assertFailsWith<VaultCryptoException>(value) { EncString.parse(value) }
+        }
+    }
+
+    @Test
+    fun kdfSafetyBounds() {
+        assertTrue(KdfConfig(KdfConfig.PBKDF2, 600_000).isSafe())
+        assertTrue(KdfConfig(KdfConfig.ARGON2ID, 3, 64, 4).isSafe())
+        assertTrue(KdfConfig(KdfConfig.ARGON2ID, 3).isSafe())
+        assertFalse(KdfConfig(KdfConfig.PBKDF2, 1).isSafe())
+        assertFalse(KdfConfig(KdfConfig.PBKDF2, 100_000_000).isSafe())
+        assertFalse(KdfConfig(KdfConfig.ARGON2ID, 1, 64, 4).isSafe())
+        assertFalse(KdfConfig(KdfConfig.ARGON2ID, 3, 8, 4).isSafe())
+        assertFalse(KdfConfig(KdfConfig.ARGON2ID, 3, 4096, 4).isSafe())
+        assertFalse(KdfConfig(7, 600_000).isSafe())
     }
 
     private fun bytes(vararg values: Int) = ByteArray(values.size) { values[it].toByte() }

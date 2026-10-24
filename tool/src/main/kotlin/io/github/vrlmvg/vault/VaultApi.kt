@@ -20,6 +20,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.util.Base64
+import java.util.concurrent.TimeUnit
 
 class VaultWrongPasswordException(message: String? = null) : Exception(message ?: "Email or master password is incorrect.")
 class VaultWrongCodeException : Exception("That two-step login code is incorrect.")
@@ -41,19 +42,32 @@ sealed interface LoginResult {
 class VaultApi(server: String) {
     private val base = server.trim().trimEnd('/')
     private val json = Json { ignoreUnknownKeys = true }
-    private val client = HttpClient(OkHttp) { expectSuccess = false }
+    private val client = HttpClient(OkHttp) {
+        expectSuccess = false
+        engine {
+            config {
+                connectTimeout(15, TimeUnit.SECONDS)
+                readTimeout(30, TimeUnit.SECONDS)
+                writeTimeout(30, TimeUnit.SECONDS)
+            }
+        }
+    }
 
     suspend fun prelogin(email: String): KdfConfig {
         val body = buildJsonObject { put("email", email.trim()) }.toString()
         var response = postJson("/identity/accounts/prelogin", body)
         if (response.status == HttpStatusCode.NotFound) response = postJson("/api/accounts/prelogin", body)
         val o = parse(ensureOk(response))
+        val type = o.int("kdf") ?: KdfConfig.PBKDF2
         return KdfConfig(
-            type = o.int("kdf") ?: KdfConfig.PBKDF2,
-            iterations = o.int("kdfIterations") ?: 600_000,
+            type = type,
+            iterations = o.int("kdfIterations") ?: if (type == KdfConfig.ARGON2ID) 3 else 600_000,
             memoryMiB = o.int("kdfMemory"),
             parallelism = o.int("kdfParallelism"),
-        )
+        ).also {
+            // A hostile server could ask for weak settings to make the password hash it receives easy to crack.
+            if (!it.isSafe()) throw VaultServerException("Your server asked for unsafe key settings. Sign-in stopped.")
+        }
     }
 
     suspend fun login(
